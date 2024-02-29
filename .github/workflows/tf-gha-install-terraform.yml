@@ -75,6 +75,10 @@ on:
         type: string
         description: 'vnet of Terraform plan'
         required: true
+      git_owner_repo:
+        type: string
+        description: 'Git owner/repo'
+        required: true
     secrets:
       azure_creds:
         required: true
@@ -88,6 +92,11 @@ on:
         required: true
       jumphostPassword:        
         required: true
+      gitURL:
+        required: true
+      gitPAT:
+        required: true
+      
 jobs:
   create-tfstate-resources:
     name: Create Resources for Terraform State
@@ -162,12 +171,21 @@ jobs:
         -backend-config='storage_account_name=${{ inputs.terraform_st_storage_account }}'
         -backend-config='container_name=${{ inputs.terraform_st_container_name }}'
         -backend-config='key=${{ inputs.terraform_st_key }}'         
-        -backend-config='resource_group_name=${{ inputs.terraform_st_resource_group }}';      
+        -backend-config='resource_group_name=${{ inputs.terraform_st_resource_group }}';
+    - name: Generate runner url from secret
+      run: |
+          export gh_runner_url="https://api.github.com/repos/${{ inputs.git_owner_repo }}/actions/runners/registration-token"
+          echo "GH_runner_url=$gh_runner_url" >> $GITHUB_ENV
+    # - name: Generate runner registration token 
+    #   run: |
+    #       export token="$(curl -L   -X POST   -H "Accept: application/vnd.github+json"   -H "Authorization: Bearer ${{ secrets.GH_PAT }} "  -H "X-GitHub-Api-Version: 2022-11-28" $GH_runner_url | jq -r .token)"
+    #       echo "GH_runner_token=$token" >> $GITHUB_ENV
       env:
         ARM_CLIENT_ID: ${{ secrets.clientId }}
         ARM_CLIENT_SECRET: ${{ secrets.clientSecret }}
         ARM_SUBSCRIPTION_ID: ${{ secrets.subscriptionId }}
-        ARM_TENANT_ID: ${{ secrets.tenantId }}     
+        ARM_TENANT_ID: ${{ secrets.tenantId }}
+        GH_PAT: ${{ secrets.gitPAT }}
     - name: Terraform Validate
       run: terraform -chdir=${{ inputs.terraform_workingdir }} validate
       env:
@@ -175,16 +193,18 @@ jobs:
         ARM_CLIENT_SECRET: ${{ secrets.clientSecret }}
         ARM_SUBSCRIPTION_ID: ${{ secrets.subscriptionId }}
         ARM_TENANT_ID: ${{ secrets.tenantId }}
-        ARM_JUMPHOST_PASSWORD: ${{ secrets.jumphostPassword }}
     - name: Terraform Plan
-      run: terraform -chdir=${{ inputs.terraform_workingdir }} plan -out=plan.tfplan -input=false -var "location=${{ inputs.terraform_plan_location }}" -var "prefix=${{ inputs.namespace }}" -var "postfix=${{ inputs.postfix }}" -var "environment=${{ inputs.environment }}"
-        -var "enable_aml_computecluster=${{ inputs.enable_aml_computecluster }}" -var "enable_monitoring=${{ inputs.enable_monitoring }}" -var "client_secret=${{ env.ARM_CLIENT_SECRET }}" -var="jumphost_password=${{ env.ARM_JUMPHOST_PASSWORD }}"
+      run: terraform -chdir=${{ inputs.terraform_workingdir }} plan -var-file="${{ inputs.environment }}.tfvars" -out=plan.tfplan -input=false -var "location=${{ inputs.terraform_plan_location }}" -var "prefix=${{ inputs.namespace }}" -var "postfix=${{ inputs.postfix }}" -var "environment=${{ inputs.environment }}"
+        -var "enable_aml_computecluster=${{ inputs.enable_aml_computecluster }}" -var "enable_monitoring=${{ inputs.enable_monitoring }}" -var "client_id=${{ env.ARM_CLIENT_ID }}" -var "client_secret=${{ env.ARM_CLIENT_SECRET }}" -var="jumphost_password=${{ env.ARM_JUMPHOST_PASSWORD }}" -var="gh_pat=$GH_runner_token" -var="gh_repo_url=$gh_repo_url" 
       env:
         ARM_CLIENT_ID: ${{ secrets.clientId }}
         ARM_CLIENT_SECRET: ${{ secrets.clientSecret }}
         ARM_SUBSCRIPTION_ID: ${{ secrets.subscriptionId }}
         ARM_TENANT_ID: ${{ secrets.tenantId }}
         ARM_JUMPHOST_PASSWORD: ${{ secrets.jumphostPassword }}
+        gh_pat: ${{ secrets.gitPAT }}
+        gh_repo_url : ${{ secrets.gitURL }}
+
     - name: Terraform Apply
       if: ${{ inputs.TFAction == 'apply'}}  
       run: terraform -chdir=${{ inputs.terraform_workingdir }} apply -input=false -auto-approve plan.tfplan 
@@ -193,7 +213,6 @@ jobs:
         ARM_CLIENT_SECRET: ${{ secrets.clientSecret }}
         ARM_SUBSCRIPTION_ID: ${{ secrets.subscriptionId }}
         ARM_TENANT_ID: ${{ secrets.tenantId }}
-        ARM_JUMPHOST_PASSWORD: ${{ secrets.jumphostPassword }}     
     - name: Terraform Destroy
       if: ${{ inputs.TFAction == 'destroy' }} 
       run: terraform -chdir=${{ inputs.terraform_workingdir }} destroy -input=false -auto-approve
@@ -202,4 +221,3 @@ jobs:
         ARM_CLIENT_SECRET: ${{ secrets.clientSecret }}
         ARM_SUBSCRIPTION_ID: ${{ secrets.subscriptionId }}
         ARM_TENANT_ID: ${{ secrets.tenantId }}
-        ARM_JUMPHOST_PASSWORD: ${{ secrets.jumphostPassword }}
